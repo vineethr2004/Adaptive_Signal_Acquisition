@@ -31,6 +31,12 @@ Create and activate a virtual environment, then install the dependencies:
 python -m pip install -r requirements.txt
 ```
 
+### PyCharm note
+
+The installed PyCharm Community 2022.1 package-management window is too old to install packages into a Python 3.12 environment: its bundled `pip` imports the removed `distutils` module. This does not affect the project interpreter or the code itself.
+
+In PyCharm, select `.venv\\Scripts\\python.exe` as the project interpreter, open the built-in **Terminal** tool window, and use the commands above there. The terminal uses the current virtual environment's modern `pip`, not PyCharm's broken package-management helper. Upgrading PyCharm is recommended, but not required to run this Stage 1 project.
+
 ## Run the toy simulator
 
 ```powershell
