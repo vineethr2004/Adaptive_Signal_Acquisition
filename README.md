@@ -2,7 +2,7 @@
 
 This repository implements a staged simulation study of adaptive signal acquisition.
 
-## Stage 1: deterministic toy simulator
+## Stage 1: deterministic foundations
 
 Stage 1 intentionally contains **no reconstruction, adaptive sensing policy, LLM, or reinforcement learning**. It makes the model
 
@@ -12,13 +12,13 @@ y = A x + \epsilon
 
 concrete and reproducible.
 
-The simulator:
+The foundations code:
 
 1. generates a directly sparse one-dimensional signal `x`;
 2. creates a finite dictionary of allowed, normalized measurement vectors;
 3. selects a fixed subset of those vectors before seeing any observations;
 4. simulates clean measurements `A @ x`, Gaussian noise, and noisy observations `y`;
-5. saves every relevant array and plots the signal, measurements, and noise.
+5. provides reproducible arrays and visual checks for the signal, measurements, and noise.
 
 Here, `A` is the matrix whose rows are the selected measurement vectors. A fixed selection means that its rows are chosen before any measurement values are observed; it is the non-adaptive starting point.
 
@@ -35,21 +35,31 @@ python -m pip install -r requirements.txt
 
 The installed PyCharm Community 2022.1 package-management window is too old to install packages into a Python 3.12 environment: its bundled `pip` imports the removed `distutils` module. This does not affect the project interpreter or the code itself.
 
-In PyCharm, select `.venv\\Scripts\\python.exe` as the project interpreter, open the built-in **Terminal** tool window, and use the commands above there. The terminal uses the current virtual environment's modern `pip`, not PyCharm's broken package-management helper. Upgrading PyCharm is recommended, but not required to run this Stage 1 project.
+In PyCharm, select `.venv\\Scripts\\python.exe` as the project interpreter, open the built-in **Terminal** tool window, and use the commands above there. The terminal uses the current virtual environment's modern `pip`, not PyCharm's broken package-management helper. Upgrading PyCharm is recommended, but not required to run this project.
 
-## Run the toy simulator
+## Stage 2: reconstruction and non-adaptive baselines
+
+Stage 2 adds a single transparent LASSO reconstructor and compares two non-adaptive sensing designs:
+
+- **fixed**: use the same preselected action rows in every trial;
+- **random**: preselect action rows at random before each trial's observations.
+
+Both methods receive the same hidden signal and the same pre-drawn noise values in each paired trial. They differ only in their selected rows of `A`. This establishes the fair reference point needed before adding adaptive sensing.
+
+## Run the Stage 2 baseline study
 
 ```powershell
-python scripts/run_toy_simulator.py --seed 20260905
+python scripts/run_baseline_study.py
 ```
 
-This writes a reproducible run to `artifacts/toy_run/`:
+This writes a reproducible study to `artifacts/stage2_baselines/`:
 
-- `arrays.npz` contains `x`, the sparse support, the full candidate dictionary, selected action indices, `A`, clean measurements, noise, and `y`;
-- `metadata.json` records the configuration and array shapes;
-- `toy_run.png` is the visual sanity-check plot.
+- `trial_records.csv` contains every fixed/random trial result;
+- `baseline_summary.csv` contains mean and median NMSE, support F1, runtime, and convergence rate by budget;
+- `nmse_vs_budget.png` compares mean NMSE across measurement budgets;
+- `metadata.json` records the frozen configuration.
 
-Run the command twice with the same seed to obtain byte-identical numerical arrays.
+Run the command twice with the same seed to obtain identical signal, action, noise, and reconstruction-quality results. Runtime values naturally vary slightly between runs.
 
 ## Tests
 
