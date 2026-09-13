@@ -61,6 +61,34 @@ This writes a reproducible study to `artifacts/stage2_baselines/`:
 
 Run the command twice with the same seed to obtain identical signal, action, noise, and reconstruction-quality results. Runtime values naturally vary slightly between runs.
 
+## Stage 3: sequential information-guided sensing
+
+Stage 3 keeps the Stage 2 LASSO reconstruction and paired comparison protocol, then adds a third method:
+
+- **information-guided**: select one unused candidate measurement row at a time. Before choosing it, use only the earlier action/observation history to score each available row by its expected information.
+
+The policy begins with a Gaussian uncertainty approximation and uses the score
+
+\[
+\log\!\left(1 + \frac{a^T \Sigma a}{\sigma^2}\right).
+\]
+
+After each observation it updates that uncertainty. It also forms a provisional LASSO estimate from the *past* measurements and uses a documented support-aware uncertainty proxy. This proxy is intentionally simple rather than claiming to be an exact sparse Bayesian posterior; its purpose is to make later choices depend on what has actually been observed. The policy function has no `x` argument, so the hidden signal cannot leak into a choice.
+
+## Run the Stage 3 comparison
+
+```powershell
+python scripts/run_adaptive_study.py
+```
+
+This writes reproducible artifacts to `artifacts/stage3_adaptive/`:
+
+- `trial_records.csv` — reconstruction results for fixed, random, and information-guided sensing;
+- `adaptive_summary.csv` — NMSE, support F1, runtime, and convergence summaries;
+- `action_traces.csv` — every adaptive action, observation, and information score;
+- `nmse_vs_budget.png` — the fair three-method comparison;
+- `metadata.json` — the exact configuration.
+
 ## Tests
 
 ```powershell
