@@ -440,11 +440,11 @@ def build_report() -> Path:
     stage4_rows = [
         ["B", "Random", "gamma=0", "gamma=0.1", "gamma=0.5", "gamma=1"],
         ["8", "0.8263", "0.7685", "0.8197", "0.8643", "0.8441"],
-        ["12", "0.5876", "0.5649", "0.6188", "0.7497", "0.7015"],
-        ["16", "0.3750", "0.3788", "0.4486", "0.6143", "0.5573"],
-        ["20", "0.2843", "0.2607", "0.3297", "0.4869", "0.4492"],
-        ["24", "0.2251", "0.2070", "0.2494", "0.3989", "0.3687"],
-        ["32", "0.1663", "0.1443", "0.1634", "0.2681", "0.2380"],
+        ["12", "0.5876", "0.5649", "0.6188", "0.7497", "0.7033"],
+        ["16", "0.3750", "0.3788", "0.4489", "0.6126", "0.5589"],
+        ["20", "0.2843", "0.2607", "0.3310", "0.4868", "0.4528"],
+        ["24", "0.2251", "0.2070", "0.2473", "0.3988", "0.3669"],
+        ["32", "0.1663", "0.1443", "0.1633", "0.2681", "0.2312"],
     ]
     stage4_table = Table(stage4_rows, colWidths=[1.0 * cm, 2.2 * cm, 2.2 * cm, 2.4 * cm, 2.4 * cm, 2.2 * cm])
     stage4_table.setStyle(
@@ -472,8 +472,8 @@ def build_report() -> Path:
         "Observed mechanism",
         [
             "Across all adaptive steps, the mean LASSO share of the raw score component rises from 0 at gamma=0 to 0.10, 0.30, and 0.42 for gamma values 0.1, 0.5, and 1.0. Mean maximum correlation with an earlier action rises from 0.17 to 0.22, while mean sensing-matrix condition number rises from 1.79 to 2.52.",
-            "Mean provisional LASSO NMSE is 0.47 for gamma=0, 0.51 for gamma=0.1, 0.62 for gamma=0.5, and 0.60 for gamma=1. The observation-dependent proxy is therefore not merely adding information: at larger weights it steers acquisition toward more redundant geometry and poorer provisional reconstructions.",
-            "At B=32, gamma=0 improves paired mean NMSE over random by -0.0220 with 95% bootstrap interval [-0.0424, -0.0011]. Gamma=1 is worse by +0.0717 with interval [+0.0344, +0.1097]. Most gamma=0 results at smaller budgets have intervals crossing zero, so they are described as competitive rather than conclusively superior.",
+            "Mean provisional LASSO NMSE is 0.47 for gamma=0, 0.51 for gamma=0.1, 0.62 for gamma=0.5, and 0.59 for gamma=1. The observation-dependent proxy is therefore not merely adding information: at larger weights it steers acquisition toward more redundant geometry and poorer provisional reconstructions.",
+            "At B=32, gamma=0 improves paired mean NMSE over random by -0.0220 with 95% bootstrap interval [-0.0424, -0.0011]. Gamma=1 is worse by +0.0649 with interval [+0.0277, +0.1007]. Most gamma=0 results at smaller budgets have intervals crossing zero, so they are described as competitive rather than conclusively superior.",
         ],
         styles,
     )

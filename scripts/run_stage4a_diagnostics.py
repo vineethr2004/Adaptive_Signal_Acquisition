@@ -134,7 +134,8 @@ def save_trace_diagnostics(result: Stage4AResult, output_path: Path) -> None:
 def main() -> None:
     args = parse_args()
     final_lasso = LassoConfig(lambda_value=args.lambda_value)
-    provisional_lasso = LassoConfig(lambda_value=args.lambda_value, max_iterations=1_000)
+    # Match the original Stage 3 adaptive_v1 solver exactly for a clean ablation.
+    provisional_lasso = final_lasso
     config = Stage4AConfig(
         signal=SignalConfig(),
         budgets=tuple(args.budgets),

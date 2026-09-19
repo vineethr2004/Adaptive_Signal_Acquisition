@@ -36,7 +36,7 @@ class Stage4AConfig:
     trials_per_budget: int = 100
     noise_std: float = 0.10
     lasso: LassoConfig = LassoConfig()
-    provisional_lasso: LassoConfig = LassoConfig(max_iterations=1_000)
+    provisional_lasso: LassoConfig = LassoConfig()
     prior_variance: float = 0.0625
     gamma_values: tuple[float, ...] = (0.0, 0.1, 0.5, 1.0)
     bootstrap_resamples: int = 2_000
