@@ -8,6 +8,7 @@ from .experiments import (
 )
 from .reconstruction import LassoConfig, LassoResult, lasso_ista
 from .signals import SignalConfig, generate_sparse_signal
+from .stage4 import Stage4AConfig, run_stage4a_diagnostics
 
 __all__ = [
     "BaselineStudyConfig",
@@ -15,8 +16,10 @@ __all__ = [
     "LassoConfig",
     "LassoResult",
     "SignalConfig",
+    "Stage4AConfig",
     "generate_sparse_signal",
     "lasso_ista",
     "run_baseline_study",
     "run_adaptive_study",
+    "run_stage4a_diagnostics",
 ]

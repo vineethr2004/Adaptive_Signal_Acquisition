@@ -4,6 +4,7 @@ from adaptive_signal_acquisition.measurements import create_candidate_dictionary
 from adaptive_signal_acquisition.sequential import (
     GaussianBelief,
     InformationGuidedPolicyConfig,
+    action_score_components,
     information_scores,
     run_information_guided_sensing,
     scoring_covariance,
@@ -25,6 +26,35 @@ def test_information_guided_run_is_deterministic_and_uses_each_action_once() -> 
     assert np.allclose(first.observations, second.observations)
     assert len(np.unique(first.action_indices)) == len(noise)
     assert np.allclose(first.observations, first.sensing_matrix @ signal + noise)
+    assert first.provisional_estimates.shape == (len(noise), signal.size)
+    assert first.selected_gaussian_components.shape == noise.shape
+    assert first.selected_lasso_components.shape == noise.shape
+    assert first.max_previous_action_correlations[0] == 0.0
+    assert np.all(np.isfinite(first.sensing_matrix_condition_numbers))
+
+
+def test_gaussian_and_lasso_components_reconstruct_the_total_score() -> None:
+    dictionary = create_candidate_dictionary(16, 8, np.random.default_rng(11))
+    belief = GaussianBelief.initial(8, prior_variance=0.2)
+    provisional = np.linspace(-0.4, 0.5, 8)
+    noise_variance = 0.01
+    components = action_score_components(
+        dictionary, belief, provisional, support_proxy_weight=0.5, noise_variance=noise_variance
+    )
+
+    expected_gaussian = np.einsum("ij,jk,ik->i", dictionary, belief.covariance, dictionary)
+    expected_lasso = 0.5 * (dictionary @ provisional) ** 2
+    assert np.allclose(components.gaussian_variance, expected_gaussian)
+    assert np.allclose(components.lasso_proxy, expected_lasso)
+    assert np.allclose(
+        components.information_score,
+        np.log1p((expected_gaussian + expected_lasso) / noise_variance),
+    )
+
+    gaussian_only = action_score_components(
+        dictionary, belief, provisional, support_proxy_weight=0.0, noise_variance=noise_variance
+    )
+    assert np.allclose(gaussian_only.lasso_proxy, 0.0)
 
 
 def test_policy_score_changes_when_observation_history_changes() -> None:

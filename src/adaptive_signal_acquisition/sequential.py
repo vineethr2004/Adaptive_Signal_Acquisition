@@ -89,8 +89,30 @@ class SequentialSensingRun:
     action_indices: IntArray
     observations: FloatArray
     selected_scores: FloatArray
+    selected_gaussian_components: FloatArray
+    selected_lasso_components: FloatArray
+    provisional_estimates: FloatArray
+    max_previous_action_correlations: FloatArray
+    sensing_matrix_smallest_singular_values: FloatArray
+    sensing_matrix_condition_numbers: FloatArray
     sensing_matrix: FloatArray
     final_belief: GaussianBelief
+
+
+@dataclass(frozen=True)
+class ActionScoreComponents:
+    """Separate terms used to construct every candidate action score.
+
+    ``gaussian_variance`` is ``a.T @ Sigma @ a``.  It depends on which
+    directions have already been measured, but not on the observed numerical
+    values.  ``lasso_proxy`` is ``gamma * (a.T @ z_hat)**2``.  It depends on
+    the provisional LASSO estimate obtained from the observation history.
+    The nonlinear information score is computed from their sum.
+    """
+
+    gaussian_variance: FloatArray
+    lasso_proxy: FloatArray
+    information_score: FloatArray
 
 
 def scoring_covariance(
@@ -118,6 +140,64 @@ def information_scores(
     return np.log1p(np.maximum(action_variances, 0.0) / noise_variance)
 
 
+def action_score_components(
+    dictionary: FloatArray,
+    belief: GaussianBelief,
+    provisional_estimate: FloatArray,
+    support_proxy_weight: float,
+    noise_variance: float,
+) -> ActionScoreComponents:
+    """Expose the Gaussian and LASSO-proxy contributions before selection."""
+
+    if provisional_estimate.shape != belief.mean.shape:
+        raise ValueError("provisional_estimate and belief must have the same dimension")
+    if support_proxy_weight < 0:
+        raise ValueError("support_proxy_weight must be non-negative")
+    if noise_variance <= 0:
+        raise ValueError("noise_variance must be positive")
+
+    gaussian_variance = np.einsum(
+        "ij,jk,ik->i", dictionary, belief.covariance, dictionary
+    )
+    alignment = dictionary @ provisional_estimate
+    lasso_proxy = support_proxy_weight * alignment**2
+    total_variance = np.maximum(gaussian_variance + lasso_proxy, 0.0)
+    return ActionScoreComponents(
+        gaussian_variance=gaussian_variance,
+        lasso_proxy=lasso_proxy,
+        information_score=np.log1p(total_variance / noise_variance),
+    )
+
+
+def select_action_with_components(
+    dictionary: FloatArray,
+    used_action_indices: IntArray,
+    belief: GaussianBelief,
+    provisional_estimate: FloatArray,
+    config: InformationGuidedPolicyConfig = InformationGuidedPolicyConfig(),
+) -> tuple[int, float, float, float]:
+    """Choose an action and return total, Gaussian, and LASSO contributions."""
+
+    components = action_score_components(
+        dictionary,
+        belief,
+        provisional_estimate,
+        config.support_proxy_weight,
+        config.noise_std**2,
+    )
+    available_scores = components.information_score.copy()
+    available_scores[used_action_indices] = -np.inf
+    action_index = int(np.argmax(available_scores))
+    if not np.isfinite(available_scores[action_index]):
+        raise ValueError("no unused candidate action remains")
+    return (
+        action_index,
+        float(available_scores[action_index]),
+        float(components.gaussian_variance[action_index]),
+        float(components.lasso_proxy[action_index]),
+    )
+
+
 def select_information_guided_action(
     dictionary: FloatArray,
     used_action_indices: IntArray,
@@ -127,13 +207,10 @@ def select_information_guided_action(
 ) -> tuple[int, float]:
     """Choose the highest-scoring unused action using only the current history."""
 
-    covariance = scoring_covariance(belief, provisional_estimate, config.support_proxy_weight)
-    scores = information_scores(dictionary, covariance, config.noise_std**2)
-    scores[used_action_indices] = -np.inf
-    action_index = int(np.argmax(scores))
-    if not np.isfinite(scores[action_index]):
-        raise ValueError("no unused candidate action remains")
-    return action_index, float(scores[action_index])
+    action_index, score, _, _ = select_action_with_components(
+        dictionary, used_action_indices, belief, provisional_estimate, config
+    )
+    return action_index, score
 
 
 def run_information_guided_sensing(
@@ -158,10 +235,16 @@ def run_information_guided_sensing(
     used: list[int] = []
     observations: list[float] = []
     selected_scores: list[float] = []
+    selected_gaussian_components: list[float] = []
+    selected_lasso_components: list[float] = []
+    provisional_estimates: list[FloatArray] = []
+    max_previous_action_correlations: list[float] = []
+    sensing_matrix_smallest_singular_values: list[float] = []
+    sensing_matrix_condition_numbers: list[float] = []
     provisional = np.zeros(dictionary.shape[1], dtype=np.float64)
 
     for noise_value in noise:
-        action_index, score = select_information_guided_action(
+        action_index, score, gaussian_component, lasso_component = select_action_with_components(
             dictionary,
             np.asarray(used, dtype=np.int64),
             belief,
@@ -174,16 +257,48 @@ def run_information_guided_sensing(
         used.append(action_index)
         observations.append(observation)
         selected_scores.append(score)
+        selected_gaussian_components.append(gaussian_component)
+        selected_lasso_components.append(lasso_component)
         sensing_matrix = dictionary[np.asarray(used, dtype=np.int64)]
         observation_vector = np.asarray(observations, dtype=np.float64)
+        if len(used) == 1:
+            max_previous_action_correlations.append(0.0)
+        else:
+            previous_actions = sensing_matrix[:-1]
+            max_previous_action_correlations.append(
+                float(np.max(np.abs(previous_actions @ action)))
+            )
+        singular_values = np.linalg.svd(sensing_matrix, compute_uv=False)
+        sensing_matrix_smallest_singular_values.append(float(singular_values[-1]))
+        if singular_values[-1] <= np.finfo(np.float64).eps:
+            sensing_matrix_condition_numbers.append(float("inf"))
+        else:
+            sensing_matrix_condition_numbers.append(
+                float(singular_values[0] / singular_values[-1])
+            )
         belief = belief.updated(action, observation, config.noise_std**2)
         provisional = lasso_ista(sensing_matrix, observation_vector, config.provisional_lasso).coefficients
+        provisional_estimates.append(provisional.copy())
 
     action_indices = np.asarray(used, dtype=np.int64)
     return SequentialSensingRun(
         action_indices=action_indices,
         observations=np.asarray(observations, dtype=np.float64),
         selected_scores=np.asarray(selected_scores, dtype=np.float64),
+        selected_gaussian_components=np.asarray(
+            selected_gaussian_components, dtype=np.float64
+        ),
+        selected_lasso_components=np.asarray(selected_lasso_components, dtype=np.float64),
+        provisional_estimates=np.asarray(provisional_estimates, dtype=np.float64),
+        max_previous_action_correlations=np.asarray(
+            max_previous_action_correlations, dtype=np.float64
+        ),
+        sensing_matrix_smallest_singular_values=np.asarray(
+            sensing_matrix_smallest_singular_values, dtype=np.float64
+        ),
+        sensing_matrix_condition_numbers=np.asarray(
+            sensing_matrix_condition_numbers, dtype=np.float64
+        ),
         sensing_matrix=dictionary[action_indices].copy(),
         final_belief=belief,
     )

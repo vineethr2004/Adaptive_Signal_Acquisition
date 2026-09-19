@@ -89,6 +89,27 @@ This writes reproducible artifacts to `artifacts/stage3_adaptive/`:
 - `nmse_vs_budget.png` — the fair three-method comparison;
 - `metadata.json` — the exact configuration.
 
+## Stage 4A: diagnose the first adaptive policy
+
+Stage 4A freezes the Stage 3 policy as `adaptive_v1` and varies only the LASSO-proxy weight
+`gamma`. For every selected action it separately records:
+
+- the Gaussian uncertainty contribution `a.T @ Sigma @ a`;
+- the history-dependent LASSO contribution `gamma * (a.T @ x_hat)**2`;
+- row correlation, smallest singular value, and sensing-matrix condition number;
+- the provisional LASSO NMSE and support F1 after the resulting observation.
+
+It also reports paired NMSE differences against random sensing with deterministic bootstrap
+95% confidence intervals.
+
+```powershell
+python scripts/run_stage4a_diagnostics.py
+```
+
+Artifacts are written to `artifacts/stage4a_diagnostics/`. The purpose is diagnosis: the
+current adaptive method remains unchanged, and a later `adaptive_v2` will be introduced only
+after these ablations identify what is failing.
+
 ## Tests
 
 ```powershell
