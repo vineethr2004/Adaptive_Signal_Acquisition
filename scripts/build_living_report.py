@@ -31,6 +31,8 @@ OUTPUT_PATH = REPOSITORY_ROOT / "output" / "pdf" / "Adaptive_Signal_Acquisition_
 STAGE_1_PLOT = REPOSITORY_ROOT / "artifacts" / "toy_run" / "toy_run.png"
 STAGE_2_PLOT = REPOSITORY_ROOT / "artifacts" / "stage2_baselines" / "nmse_vs_budget.png"
 STAGE_3_PLOT = REPOSITORY_ROOT / "artifacts" / "stage3_adaptive" / "nmse_vs_budget.png"
+STAGE_4A_PLOT = REPOSITORY_ROOT / "artifacts" / "stage4a_diagnostics" / "nmse_gamma_ablation.png"
+STAGE_4A_TRACE_PLOT = REPOSITORY_ROOT / "artifacts" / "stage4a_diagnostics" / "trace_diagnostics.png"
 
 
 def paragraph(text: str, style: ParagraphStyle) -> Paragraph:
@@ -167,7 +169,7 @@ def build_report() -> Path:
     story: list[object] = []
     story.append(Spacer(1, 1.5 * cm))
     story.append(paragraph("Adaptive Signal Acquisition", styles["ReportTitle"]))
-    story.append(paragraph("Living Technical Report - Stages 1 through 3", styles["ReportSubtitle"]))
+    story.append(paragraph("Living Technical Report - Stages 1 through 4A", styles["ReportSubtitle"]))
     story.append(paragraph("Purpose", styles["Heading2"]))
     story.append(
         paragraph(
@@ -179,7 +181,7 @@ def build_report() -> Path:
     story.append(paragraph("Current evidence-based conclusion", styles["Heading2"]))
     story.append(
         paragraph(
-            "The first information-guided policy is implemented, reproducible, and fair against fixed and random sensing. Across 100 trials in the current direct-sparse setting, it does not beat the strongest non-adaptive baseline at any tested budget. This is a valid finding, not a failure to hide. The next work is a controlled Stage 4 study and ablation, not an unprincipled attempt to tune until adaptive wins.",
+            "Stage 4A isolated the failure in the first information-guided policy. Across 100 paired trials, large provisional-LASSO weights make selected rows more correlated and the sensing matrix less well conditioned. The Gaussian-only policy is competitive and beats random at B=32, but it does not use observation values. The next task is adaptive_v2: retain geometric diversity while introducing a better estimate of observation-dependent uncertainty.",
             styles["Callout"],
         )
     )
@@ -188,7 +190,8 @@ def build_report() -> Path:
         ["1", "Complete", "Deterministic simulator and visual sanity checks"],
         ["2", "Complete", "LASSO reconstruction, fixed/random paired baselines"],
         ["3", "Complete", "Sequential information policy and 100-trial comparison"],
-        ["4", "Next", "Controlled sweeps, ablations, confidence intervals"],
+        ["4A", "Complete", "Gamma ablation, score attribution, diversity diagnostics"],
+        ["4B", "Next", "Observation-dependent adaptive_v2 and controlled validation"],
     ]
     summary_table = Table(summary_rows, colWidths=[1.3 * cm, 2.4 * cm, 11.5 * cm])
     summary_table.setStyle(
@@ -412,55 +415,114 @@ def build_report() -> Path:
         styles,
     )
 
-    story.append(paragraph("7. Diagnosis and Stage 4 decision", styles["Heading1"]))
+    story.append(paragraph("7. Stage 4A - score attribution and gamma ablation", styles["Heading1"]))
     section(
         story,
-        "7.1 Why information-guided selection is not guaranteed to win",
+        "7.1 Separating the two score components",
         [
-            "The information score optimizes approximate uncertainty reduction under a Gaussian model. The project evaluates final NMSE after sparse LASSO reconstruction. Those objectives are related but not identical.",
-            "The true signals are hard-sparse, whereas the Gaussian belief is dense. The early provisional LASSO estimate is based on very few measurements and can be unstable; its support-aware term can amplify an early wrong guess. The policy is greedy, optimizing the next measurement score rather than the final B-measurement reconstruction. Finally, all candidate rows are dense random mixtures, so an apparently informative row may not improve the conditioning or support-identification ability of the eventual sensing matrix.",
+            "Stage 3 formed one matrix Sigma_tilde = Sigma_t + gamma x_hat_t x_hat_t^T and saved only the final nonlinear information score. Stage 4A preserves that selection rule but separately records the two raw contributions for every selected action.",
+            "The Gaussian component g(a) = a^T Sigma_t a measures remaining posterior variance along a. It changes when measurement directions are selected, but its covariance update does not depend on the numerical y values. The LASSO component l(a) = gamma (a^T x_hat_t)^2 measures alignment with the current provisional reconstruction and therefore depends on observed y values. The total score applies the logarithm only after adding these terms.",
+        ],
+        styles,
+    )
+    story.append(equation("g(a) = a^T Sigma_t a", styles["Equation"]))
+    story.append(equation("l(a) = gamma (a^T x_hat_t)^2", styles["Equation"]))
+    story.append(equation("score(a) = log(1 + (g(a) + l(a)) / sigma^2)", styles["Equation"]))
+    section(
+        story,
+        "7.2 Experimental protocol",
+        [
+            "The ablation used 100 paired trials with N=64, k=4, 128 dense Rademacher candidate actions, noise standard deviation 0.1, budgets 8, 12, 16, 20, 24, and 32, final LASSO lambda 0.08, and seed 20260919. The tested gamma values were 0, 0.1, 0.5, and 1.0. Paired NMSE differences against random sensing use 2000 deterministic bootstrap resamples for 95% confidence intervals.",
+            "Gamma=0 disables the LASSO component. It remains sequential because Sigma changes after selected rows, but it is not observation-value adaptive: two trials with the same dictionary select the same row sequence even if their y values differ.",
+        ],
+        styles,
+    )
+    stage4_rows = [
+        ["B", "Random", "gamma=0", "gamma=0.1", "gamma=0.5", "gamma=1"],
+        ["8", "0.8263", "0.7685", "0.8197", "0.8643", "0.8441"],
+        ["12", "0.5876", "0.5649", "0.6188", "0.7497", "0.7015"],
+        ["16", "0.3750", "0.3788", "0.4486", "0.6143", "0.5573"],
+        ["20", "0.2843", "0.2607", "0.3297", "0.4869", "0.4492"],
+        ["24", "0.2251", "0.2070", "0.2494", "0.3989", "0.3687"],
+        ["32", "0.1663", "0.1443", "0.1634", "0.2681", "0.2380"],
+    ]
+    stage4_table = Table(stage4_rows, colWidths=[1.0 * cm, 2.2 * cm, 2.2 * cm, 2.4 * cm, 2.4 * cm, 2.2 * cm])
+    stage4_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E79")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C7D3E0")),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F7FAFD")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story.extend([Spacer(1, 0.15 * cm), stage4_table, Spacer(1, 0.2 * cm)])
+    add_plot(story, STAGE_4A_PLOT, "Figure 4. Stage 4A mean NMSE: larger LASSO-proxy weights systematically degrade reconstruction after the smallest budget.", styles)
+    story.append(PageBreak())
+    story.append(paragraph("7.3 Action-level diagnostic evidence", styles["Heading2"]))
+    section(
+        story,
+        "Observed mechanism",
+        [
+            "Across all adaptive steps, the mean LASSO share of the raw score component rises from 0 at gamma=0 to 0.10, 0.30, and 0.42 for gamma values 0.1, 0.5, and 1.0. Mean maximum correlation with an earlier action rises from 0.17 to 0.22, while mean sensing-matrix condition number rises from 1.79 to 2.52.",
+            "Mean provisional LASSO NMSE is 0.47 for gamma=0, 0.51 for gamma=0.1, 0.62 for gamma=0.5, and 0.60 for gamma=1. The observation-dependent proxy is therefore not merely adding information: at larger weights it steers acquisition toward more redundant geometry and poorer provisional reconstructions.",
+            "At B=32, gamma=0 improves paired mean NMSE over random by -0.0220 with 95% bootstrap interval [-0.0424, -0.0011]. Gamma=1 is worse by +0.0717 with interval [+0.0344, +0.1097]. Most gamma=0 results at smaller budgets have intervals crossing zero, so they are described as competitive rather than conclusively superior.",
+        ],
+        styles,
+    )
+    if STAGE_4A_TRACE_PLOT.exists():
+        story.append(Image(str(STAGE_4A_TRACE_PLOT), width=15.6 * cm, height=11.35 * cm))
+        caption(story, "Figure 5. Stage 4A action diagnostics: proxy dominance, row correlation, condition number, and provisional reconstruction error.", styles)
+    story.append(PageBreak())
+
+    story.append(paragraph("8. Diagnosis and Stage 4B decision", styles["Heading1"]))
+    section(
+        story,
+        "8.1 What Stage 4A established",
+        [
+            "The Gaussian component is useful for geometrically balanced experimental design. It reduces variance in directions not yet well measured and tends to preserve a better-conditioned sensing matrix. However, because its covariance update ignores observed values, gamma=0 is not the observation-guided solution sought by the project.",
+            "The current LASSO outer-product component does use observations, but it treats large estimated signal magnitude as if it were uncertainty. Those are different concepts. The term gamma (a^T x_hat)^2 rewards rows aligned with what the estimator already believes, and large gamma can overpower the diversity supplied by the Gaussian covariance.",
         ],
         styles,
     )
     section(
         story,
-        "7.2 Correct next move",
+        "8.2 Correct next move: adaptive_v2",
         [
-            "Proceed to Stage 4, but preserve the present method as adaptive_v1. Do not silently modify it until it wins. Stage 4 exists specifically to learn when adaptivity helps, including the possibility that it does not help here.",
-            "First run ablations: gamma=0 (Gaussian action-history-only policy), gamma values such as 0.1, 0.5, and 1.0, and the present gamma=1.0 policy. This separates the effect of the support-aware proxy from the base uncertainty score.",
-            "Then sweep budget, noise/SNR, sparsity k, and signal family. Add one distribution shift, for example calibrating at k=4 and testing at k=8 or using a different noise distribution. Use 100 trials per condition initially and 500 only for final selected figures. Report bootstrap confidence intervals for paired NMSE differences, not only means.",
-        ],
-        styles,
-    )
-    section(
-        story,
-        "7.3 What may become adaptive_v2",
-        [
-            "Only after the ablation results identify a problem should we introduce a second policy. Candidate improvements include a sparse posterior or support-probability uncertainty model, a score that explicitly rewards measurement diversity and lower mutual coherence, or a policy selected for expected improvement in sparse reconstruction rather than Gaussian entropy alone. adaptive_v2 must be a new named method compared against frozen adaptive_v1 and the original baselines.",
+            "Freeze gamma=1 as adaptive_v1 and retain gamma=0 as a non-observation-dependent sequential-design reference. Build adaptive_v2 with an initial random or Gaussian-diverse burn-in, then estimate uncertainty from variation across multiple plausible sparse reconstructions rather than from x_hat x_hat^T magnitude.",
+            "A practical next model is bootstrap-LASSO covariance: perturb or resample the observed data, reconstruct several plausible signals, calculate their empirical covariance, and score a candidate by a^T Sigma_boot a. This asks where plausible reconstructions disagree. An explicit row-diversity penalty may be added only if the covariance score does not sufficiently prevent redundancy.",
+            "After adaptive_v2 is stable on the base setting, continue Stage 4 with controlled sweeps over SNR, sparsity, signal family, and dictionary family. Use 100 trials per condition and 500 for selected final figures.",
         ],
         styles,
     )
     story.append(
         paragraph(
-            "Decision: Stage 3 is complete. Stage 4 is the right next stage, and it should begin with controlled ablations rather than an unexplained rewrite of the policy.",
+            "Decision: Stage 4A is complete. The failure is localized to the current observation-dependent LASSO proxy, not to the entire idea of sequential experimental design. Stage 4B should replace magnitude alignment with estimated sparse-reconstruction uncertainty.",
             styles["Callout"],
         )
     )
     story.append(PageBreak())
 
-    story.append(paragraph("8. Reproducibility and maintenance", styles["Heading1"]))
+    story.append(paragraph("9. Reproducibility and maintenance", styles["Heading1"]))
     section(
         story,
-        "8.1 Repository map",
+        "9.1 Repository map",
         [
-            "src/adaptive_signal_acquisition/signals.py defines sparse-signal generation. measurements.py defines the candidate dictionary and y = A x + noise. reconstruction.py contains ISTA LASSO. baselines.py contains fixed/random action selection. sequential.py contains the Stage 3 Gaussian belief, information score, history proxy, and sequential loop. experiments.py creates fair paired studies.",
-            "scripts/run_baseline_study.py creates Stage 2 artifacts. scripts/run_adaptive_study.py creates Stage 3 artifacts. scripts/build_living_report.py regenerates this PDF.",
+            "src/adaptive_signal_acquisition/signals.py defines sparse-signal generation. measurements.py defines the candidate dictionary and y = A x + noise. reconstruction.py contains ISTA LASSO. baselines.py contains fixed/random action selection. sequential.py contains score attribution and the sequential loop. experiments.py creates Stage 2/3 paired studies. stage4.py creates the controlled gamma ablation and bootstrap intervals.",
+            "scripts/run_baseline_study.py creates Stage 2 artifacts. scripts/run_adaptive_study.py creates Stage 3 artifacts. scripts/run_stage4a_diagnostics.py creates Stage 4A artifacts. scripts/build_living_report.py regenerates this PDF.",
         ],
         styles,
     )
     section(
         story,
-        "8.2 Update rule for this report",
+        "9.2 Update rule for this report",
         [
             "After every completed experiment family, update: (1) the exact configuration and seed, (2) equations or policy changes, (3) result tables and figures, (4) the interpretation including failures, and (5) the next decision. Never replace an old result without preserving the method name and configuration that produced it.",
             "The report should remain evidence-led. A conclusion must identify the relevant artifact folder, sample count, metric, and comparison protocol. This is especially important before adding an LLM research orchestrator in later stages.",
@@ -469,17 +531,18 @@ def build_report() -> Path:
     )
     section(
         story,
-        "8.3 Commands",
+        "9.3 Commands",
         [
             "Run tests: .venv\\Scripts\\python.exe -m pytest",
             "Run Stage 2: .venv\\Scripts\\python.exe scripts\\run_baseline_study.py",
             "Run Stage 3: .venv\\Scripts\\python.exe scripts\\run_adaptive_study.py",
+            "Run Stage 4A: .venv\\Scripts\\python.exe scripts\\run_stage4a_diagnostics.py",
             "Regenerate this report: use the bundled runtime or an environment with reportlab installed to run scripts\\build_living_report.py",
         ],
         styles,
     )
     story.append(Spacer(1, 0.5 * cm))
-    story.append(paragraph("Report version: v1 - Stages 1 through 3 complete", styles["Caption"]))
+    story.append(paragraph("Report version: v2 - Stages 1 through 4A complete", styles["Caption"]))
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return OUTPUT_PATH
 
