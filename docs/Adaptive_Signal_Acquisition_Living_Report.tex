@@ -1,0 +1,682 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=25mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{array,longtable}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={Adaptive Signal Acquisition: Living Technical Report},
+  pdfauthor={Adaptive Signal Acquisition project}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\raggedbottom
+\emergencystretch=1em
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}
+\renewcommand{\arraystretch}{1.18}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\supp}{\operatorname{supp}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\argmin}{\operatorname*{arg\,min}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\norm}[1]{\left\lVert #1\right\rVert}
+\newcommand{\trans}{^{\mathsf T}}
+
+\title{\textbf{Adaptive Signal Acquisition}\\[0.4em]
+\large A Living Technical Report on Sparse Reconstruction and Sequential Sensing}
+\author{Project technical record}
+\date{Version 3 --- Stages 1 through 4B --- 27 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report develops a reproducible simulation study of sparse-signal acquisition under a
+limited noisy-measurement budget.  The central question is whether a sequential sensing
+policy, which chooses each new measurement after seeing earlier observations, improves
+reconstruction over fair non-adaptive baselines.  Stages 1 and 2 establish the deterministic
+simulator, LASSO reconstruction, and fixed and random references.  Stage 3 introduces a
+Gaussian information score augmented by a provisional-LASSO magnitude proxy.  Stage 4A
+shows that the proxy is harmful: it rewards alignment with the current estimate rather than
+uncertainty.  Stage 4B replaces it with an observation-dependent bootstrap covariance of
+plausible sparse reconstructions.  In 100 paired trials the new method removes the large
+failure of the first adaptive policy and is statistically competitive with random and
+Gaussian-only sensing, but it does not yet provide a significant improvement.  The report
+states the mathematical model, derives each score and update, defines every experimental
+quantity, records negative results, and identifies the next controlled experiments.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Research question and scope}
+
+The primary question is:
+
+\begin{quote}
+When only a limited number of noisy linear measurements may be taken, can selecting each
+new measurement using the previous action--observation history reconstruct a sparse signal
+more accurately than selecting all measurements in advance?
+\end{quote}
+
+The operational endpoint is normalized mean squared error (NMSE).  A comparison is fair
+only when the methods share the hidden-signal distribution, candidate measurement
+dictionary, noise law, measurement budget, final reconstruction algorithm, and paired
+random draws.  The project currently studies a synthetic, directly sparse vector.  It is a
+controlled algorithmic test bed, not yet a claim about a particular physical sensor.
+
+\section{Notation and mathematical model}
+
+\subsection{Notation}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.19\textwidth}p{0.73\textwidth}}
+\hline
+Symbol & Definition \\
+\hline
+$N$ & Dimension of the unknown signal; $N=64$ in the primary experiments. \\
+$k$ & Number of non-zero coordinates; $k=4$ in the primary experiments. \\
+$x\in\R^N$ & Hidden signal.  It is available to the simulator but never to a sensing policy. \\
+$\supp(x)$ & Support of $x$, namely the indices of its non-zero entries. \\
+$D\in\R^{M\times N}$ & Candidate measurement dictionary; $M=128$ normalized rows. \\
+$a_t\in\R^N$ & Column-form measurement vector selected at sequential step $t$; $a_t\trans$ is a row of $D$. \\
+$B$ & Measurement budget, or number of selected rows. \\
+$A_t\in\R^{t\times N}$ & Sensing matrix formed by stacking the first $t$ selected rows. \\
+$y_t\in\R$ & Scalar noisy observation returned for action $a_t$. \\
+$y_{1:t}\in\R^t$ & Vector containing the first $t$ observations. \\
+$\epsilon_t$ & Independent Gaussian measurement noise with variance $\sigma^2$. \\
+$\hat{x}_t$ & Provisional sparse reconstruction after $t$ observations. \\
+$\mu_t,\Sigma_t$ & Mean and covariance of the Gaussian uncertainty approximation. \\
+$\lambda$ & LASSO sparsity-penalty coefficient; it is unrelated to the sensing weight $\gamma$. \\
+$\gamma$ & Stage 3/4A weight on the provisional-LASSO magnitude proxy. \\
+$R$ & Number of bootstrap reconstructions in Stage 4B; $R=12$. \\
+$\rho$ & Stage 4B Gaussian shrinkage weight; $\rho=0.25$. \\
+\hline
+\end{longtable}
+
+\subsection{Sparse hidden signal}
+
+A vector is $k$-sparse when exactly $k$ coordinates are non-zero:
+\begin{equation}
+x\in\R^N,
+\qquad \norm{x}_0 = |\supp(x)| = k \ll N .
+\label{eq:sparsity}
+\end{equation}
+The notation $\norm{x}_0$ counts non-zero entries; it is not a norm in the strict algebraic
+sense.  In each trial, the simulator samples $k$ support indices uniformly without
+replacement and assigns independent amplitudes from $\mathcal{N}(0,1)$.  More generally a
+signal may be sparse in a known basis $\Psi$, so that $x=\Psi z$ and $z$ is sparse.  The
+current implementation uses $\Psi=I$, hence $z=x$.
+
+\subsection{Candidate actions and noisy measurements}
+
+Each candidate row contains $N$ independent Rademacher entries ($-1$ or $+1$ with equal
+probability) and is normalized to unit Euclidean length.  Thus
+\begin{equation}
+D=\begin{bmatrix}d_1\trans\\ \vdots\\ d_M\trans\end{bmatrix}\in\R^{M\times N},
+\qquad \norm{d_j}_2=1,
+\qquad M=128 .
+\label{eq:dictionary}
+\end{equation}
+The candidate count $M$ is not the signal dimension $N$ and is not the budget $B$.  It is
+the number of allowed experiments from which a policy chooses.  If indices
+$i_1,\ldots,i_B$ are selected, the sensing matrix is
+\begin{equation}
+A_B=\begin{bmatrix}a_1\trans\\a_2\trans\\\vdots\\a_B\trans\end{bmatrix}
+=\begin{bmatrix}d_{i_1}\trans\\d_{i_2}\trans\\\vdots\\d_{i_B}\trans\end{bmatrix}
+\in\R^{B\times N} .
+\label{eq:sensing-matrix}
+\end{equation}
+At step $t$, the environment returns one scalar:
+\begin{equation}
+y_t=a_t\trans x+\epsilon_t,
+\qquad \epsilon_t\stackrel{\text{i.i.d.}}{\sim}\mathcal{N}(0,\sigma^2),
+\qquad \sigma=0.10 .
+\label{eq:scalar-measurement}
+\end{equation}
+Stacking the observations gives the standard linear inverse problem
+\begin{equation}
+y_{1:B}=A_Bx+\epsilon .
+\label{eq:linear-model}
+\end{equation}
+A measurement is therefore a weighted sum of all coordinates, not necessarily a direct
+sample of one coordinate.  The simulation represents what a physical linear measurement
+device would do after calibration supplies its response coefficients.
+
+\section{Stage 1: deterministic foundations}
+
+Stage 1 creates $x$, $D$, a fixed action subset, $A$, clean measurements $Ax$, a Gaussian
+noise vector, and observations $y$.  A seeded NumPy generator makes the arrays exactly
+reproducible.  The main shapes are
+\begin{equation}
+x:(64,),\qquad D:(128,64),\qquad A:(B,64),\qquad y:(B,).
+\end{equation}
+No reconstruction or adaptivity is used at this stage.  Its purpose is to make every array
+in Equation~\eqref{eq:linear-model} inspectable and to ensure that later differences come
+from algorithms rather than accidental changes in random data.
+
+\IfFileExists{artifacts/toy_run/toy_run.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.94\textwidth]{artifacts/toy_run/toy_run.png}
+\caption{Stage 1 visual check of the sparse signal, clean measurements, noise, and observations.}
+\end{figure}}{}
+
+\section{Stage 2: sparse reconstruction and non-adaptive baselines}
+
+\subsection{LASSO objective}
+
+After $B$ measurements the project reconstructs the signal with LASSO:
+\begin{equation}
+\hat{x}
+=\argmin_{z\in\R^N}
+\left\{
+\frac{1}{2}\norm{A_Bz-y_{1:B}}_2^2+\lambda\norm{z}_1
+\right\} .
+\label{eq:lasso}
+\end{equation}
+Here $z$ is a variable representing a candidate reconstruction; it is not the observed
+vector $y$.  The first term is small when $z$ explains the data.  The second term,
+$\norm{z}_1=\sum_{j=1}^N|z_j|$, discourages many non-zero coefficients.  The primary final
+solver uses $\lambda=0.08$, at most 5000 iterations, and tolerance $10^{-7}$.
+
+\subsection{ISTA derivation}
+
+Let $f(z)=\tfrac12\norm{A_Bz-y}_2^2$.  Its gradient is
+\begin{equation}
+\nabla f(z)=A_B\trans(A_Bz-y).
+\label{eq:lasso-gradient}
+\end{equation}
+The gradient is Lipschitz with constant $L=\norm{A_B}_2^2$, where $\norm{A_B}_2$ is the
+largest singular value.  Iterative shrinkage-thresholding (ISTA) performs
+\begin{align}
+u^{(q)} &= z^{(q)}-\frac{1}{L}\nabla f\!\left(z^{(q)}\right), \\
+z^{(q+1)} &= \mathcal{S}_{\lambda/L}\!\left(u^{(q)}\right),
+\label{eq:ista}
+\end{align}
+where soft thresholding acts coordinatewise:
+\begin{equation}
+\mathcal{S}_{\theta}(u_j)
+=\operatorname{sign}(u_j)\max\{|u_j|-\theta,0\} .
+\label{eq:soft-threshold}
+\end{equation}
+The gradient step improves data agreement; soft thresholding is the proximal step for the
+$\ell_1$ term and sets sufficiently weak coordinates to zero.
+
+\subsection{Fixed and random reference policies}
+
+The \emph{fixed} policy uses the same precomputed row order in every trial.  The
+\emph{random} policy draws a row order before observing any $y_t$ values.  Both are
+non-adaptive.  Within a trial all methods receive the same hidden $x$ and the same noise
+prefix; only their selected rows differ.  A budget $B=16$ means 16 total measurements, not
+four groups of 16 and not 16 observations repeated across trials.
+
+\subsection{Metrics}
+
+The principal metric is
+\begin{equation}
+\operatorname{NMSE}(x,\hat{x})
+=\frac{\norm{x-\hat{x}}_2^2}{\norm{x}_2^2+10^{-12}} .
+\label{eq:nmse}
+\end{equation}
+The $10^{-12}$ term is only a numerical guard.  Lower NMSE is better.  Support recovery is
+reported using precision, recall, and their harmonic mean:
+\begin{equation}
+F_1=\frac{2PR}{P+R},\qquad
+P=\frac{|\widehat{S}\cap S|}{|\widehat{S}|},\qquad
+R=\frac{|\widehat{S}\cap S|}{|S|},
+\label{eq:f1}
+\end{equation}
+where $S=\supp(x)$ and $\widehat{S}=\{j:|\hat{x}_j|>10^{-3}\}$.
+
+\IfFileExists{artifacts/stage2_baselines/nmse_vs_budget.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{artifacts/stage2_baselines/nmse_vs_budget.png}
+\caption{Stage 2 baseline behavior.  Reconstruction error decreases as the budget grows.}
+\end{figure}}{}
+
+\section{Stage 3: first sequential information-guided policy}
+
+\subsection{History and causal selection}
+
+At time $t$, the available history is
+\begin{equation}
+h_t=(A_t,y_{1:t}) .
+\label{eq:history}
+\end{equation}
+A valid policy selects $a_{t+1}=\pi(h_t)$ before the simulator evaluates
+$a_{t+1}\trans x+\epsilon_{t+1}$.  The selector has no hidden-signal argument.  This ordering
+prevents truth leakage.
+
+\subsection{Gaussian information score}
+
+Assume temporarily that the conditional belief is Gaussian:
+\begin{equation}
+x\mid h_t\sim\mathcal{N}(\mu_t,\Sigma_t).
+\label{eq:gaussian-belief}
+\end{equation}
+For a candidate action $a$, the noiseless scalar $a\trans x$ has variance
+\begin{equation}
+\Var(a\trans x\mid h_t)
+=\E\!\left[(a\trans(x-\mu_t))^2\mid h_t\right]
+=a\trans\Sigma_t a .
+\label{eq:projected-variance}
+\end{equation}
+Because independent noise adds variance, $y\mid h_t,a$ has variance
+$a\trans\Sigma_ta+\sigma^2$.  The entropy of a scalar Gaussian with variance $v$ is
+$\tfrac12\log(2\pi e v)$.  Hence the mutual information is
+\begin{align}
+I(x;y\mid h_t,a)
+&=H(y\mid h_t,a)-H(y\mid x,h_t,a)\\
+&=\frac12\log\!\left(1+\frac{a\trans\Sigma_ta}{\sigma^2}\right).
+\label{eq:mutual-information}
+\end{align}
+The implementation omits the positive factor $\tfrac12$ because it cannot change the
+ranking.  It selects the unused row maximizing
+\begin{equation}
+s_G(a)=\log\!\left(1+\frac{a\trans\Sigma_ta}{\sigma^2}\right).
+\label{eq:gaussian-score}
+\end{equation}
+
+\subsection{Gaussian conditioning update}
+
+After observing $(a_t,y_t)$, the exact linear-Gaussian update is
+\begin{align}
+K_t&=\frac{\Sigma_ta_t}{a_t\trans\Sigma_ta_t+\sigma^2}, \\
+\mu_{t+1}&=\mu_t+K_t(y_t-a_t\trans\mu_t), \\
+\Sigma_{t+1}&=\Sigma_t-K_ta_t\trans\Sigma_t .
+\label{eq:gaussian-update}
+\end{align}
+$K_t$ is the gain.  The covariance update depends on the selected direction but not on the
+numerical observation.  Therefore Gaussian-only sensing is sequential but, with fixed
+dictionary and tie breaking, its row sequence is not observation-value adaptive.
+
+\subsection{The adaptive\_v1 magnitude proxy}
+
+To make Stage 3 react to $y$, a provisional LASSO estimate $\hat{x}_t$ was inserted through
+\begin{equation}
+\widetilde{\Sigma}_t
+=\Sigma_t+\gamma\hat{x}_t\hat{x}_t\trans .
+\label{eq:v1-covariance}
+\end{equation}
+For a candidate $a$,
+\begin{equation}
+a\trans\widetilde{\Sigma}_ta
+=\underbrace{a\trans\Sigma_ta}_{g_t(a)}
++\underbrace{\gamma(a\trans\hat{x}_t)^2}_{\ell_t(a)} .
+\label{eq:v1-components}
+\end{equation}
+Thus $\gamma$ controls only the sensing score; it does not change the LASSO penalty
+$\lambda$.  The selected action maximizes
+\begin{equation}
+s_{v1}(a)=\log\!\left(1+\frac{g_t(a)+\ell_t(a)}{\sigma^2}\right).
+\label{eq:v1-score}
+\end{equation}
+
+\section{Stage 3 result and Stage 4A diagnosis}
+
+The Stage 3 policy was worse than the non-adaptive references at every tested budget.
+Table~\ref{tab:stage3} reports mean NMSE over 100 trials.
+
+\begin{table}[htbp]
+\centering
+\caption{Stage 3 mean NMSE; lower is better.}
+\label{tab:stage3}
+\begin{tabular}{rrrr}
+\hline
+$B$ & Fixed & Random & adaptive\_v1 \\
+\hline
+8  & 0.8324 & 0.8238 & 0.9006 \\
+12 & 0.5616 & 0.6010 & 0.7795 \\
+16 & 0.4045 & 0.4185 & 0.6499 \\
+20 & 0.3024 & 0.3396 & 0.5078 \\
+24 & 0.2400 & 0.2792 & 0.4028 \\
+32 & 0.1815 & 0.2004 & 0.2724 \\
+\hline
+\end{tabular}
+\end{table}
+
+Stage 4A varied only $\gamma\in\{0,0.1,0.5,1\}$ and recorded the separate components in
+Equation~\eqref{eq:v1-components}, row correlation, singular values, condition number, and
+provisional reconstruction quality.  The complete 100-trial result is shown in
+Table~\ref{tab:stage4a}.
+
+\begin{table}[htbp]
+\centering
+\caption{Stage 4A mean NMSE for the magnitude-proxy ablation.}
+\label{tab:stage4a}
+\begin{tabular}{rrrrrr}
+\hline
+$B$ & Random & $\gamma=0$ & $\gamma=0.1$ & $\gamma=0.5$ & $\gamma=1$ \\
+\hline
+8  & 0.8263 & 0.7685 & 0.8197 & 0.8643 & 0.8441 \\
+12 & 0.5876 & 0.5649 & 0.6188 & 0.7497 & 0.7033 \\
+16 & 0.3750 & 0.3788 & 0.4489 & 0.6126 & 0.5589 \\
+20 & 0.2843 & 0.2607 & 0.3310 & 0.4868 & 0.4528 \\
+24 & 0.2251 & 0.2070 & 0.2473 & 0.3988 & 0.3669 \\
+32 & 0.1663 & 0.1443 & 0.1633 & 0.2681 & 0.2312 \\
+\hline
+\end{tabular}
+\end{table}
+
+At $B=32$, Gaussian-only ($\gamma=0$) had paired difference $-0.0220$ from random with
+95\% bootstrap interval $[-0.0424,-0.0011]$.  The original $\gamma=1$ policy had difference
+$+0.0649$ with interval $[+0.0277,+0.1007]$.  Increasing $\gamma$ raised the mean maximum
+row correlation from 0.17 to 0.22 and the mean condition number from 1.79 to 2.52.
+
+The diagnosis follows directly from Equation~\eqref{eq:v1-components}:
+$\hat{x}_t\hat{x}_t\trans$ represents estimated magnitude, not uncertainty.  It rewards
+rows aligned with what the provisional estimate already believes and can repeatedly measure
+similar directions.  A valid replacement should ask where plausible reconstructions
+\emph{disagree}.
+
+\IfFileExists{artifacts/stage4a_diagnostics/nmse_gamma_ablation.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{artifacts/stage4a_diagnostics/nmse_gamma_ablation.png}
+\caption{Stage 4A: larger magnitude-proxy weights degrade reconstruction.}
+\end{figure}}{}
+
+\section{Stage 4B: adaptive\_v2 bootstrap uncertainty}
+
+\subsection{Design requirements}
+
+The replacement was implemented as a separate policy; adaptive\_v1 remains unchanged for
+comparison.  The new policy must (i) depend on observed values, (ii) represent uncertainty
+rather than magnitude, (iii) retain geometric diversity, (iv) never receive the hidden
+signal, and (v) be exactly reproducible under a fixed policy seed.
+
+\subsection{Gaussian-diverse burn-in}
+
+Bootstrap uncertainty cannot be estimated before observations exist.  For the first
+$b_0=8$ actions, adaptive\_v2 therefore uses Equation~\eqref{eq:gaussian-score}.  This
+burn-in collects diverse rows and produces an initial history $(A_{b_0},y_{1:b_0})$.  It is
+not random: it greedily covers directions that remain uncertain under $\Sigma_t$.
+
+\subsection{Parametric bootstrap ensemble}
+
+At a post-burn-in step $t$, generate $R=12$ perturbed observation vectors
+\begin{equation}
+y_{1:t}^{(r)}=y_{1:t}+\eta^{(r)},
+\qquad
+\eta^{(r)}\sim\mathcal{N}(0,\tau^2\sigma^2 I_t),
+\qquad r=1,\ldots,R,
+\label{eq:bootstrap-observations}
+\end{equation}
+with perturbation multiplier $\tau=1$.  For each perturbation, solve
+\begin{equation}
+\hat{x}_t^{(r)}
+=\argmin_z
+\left\{
+\frac12\norm{A_tz-y_{1:t}^{(r)}}_2^2+\lambda\norm{z}_1
+\right\} .
+\label{eq:bootstrap-lasso}
+\end{equation}
+The implementation evaluates all $R$ ISTA problems in one vectorized matrix update.  The
+policy-internal solver uses at most 500 iterations and tolerance $10^{-5}$; the final
+evaluation still uses the unchanged 5000-iteration LASSO.
+
+Define the ensemble mean and empirical covariance by
+\begin{align}
+\bar{x}_t&=\frac1R\sum_{r=1}^R\hat{x}_t^{(r)}, \\
+\widehat{\Sigma}_{B,t}
+&=\frac{1}{R-1}\sum_{r=1}^R
+(\hat{x}_t^{(r)}-\bar{x}_t)(\hat{x}_t^{(r)}-\bar{x}_t)\trans .
+\label{eq:bootstrap-covariance}
+\end{align}
+For any candidate $a$,
+\begin{equation}
+a\trans\widehat{\Sigma}_{B,t}a
+=\frac{1}{R-1}\sum_{r=1}^R
+\left[a\trans(\hat{x}_t^{(r)}-\bar{x}_t)\right]^2 .
+\label{eq:bootstrap-projection}
+\end{equation}
+Equation~\eqref{eq:bootstrap-projection} is the sample variance of the measurement predicted
+by the ensemble.  A large value means plausible sparse explanations of the existing data
+predict different outcomes for action $a$.  That is the intended notion of informativeness.
+
+\subsection{Trace matching and shrinkage}
+
+The Gaussian and bootstrap covariances can have very different total scales.  Directly
+adding them would make their relative influence depend on solver scale rather than an
+explicit design parameter.  The implementation trace-matches the bootstrap covariance:
+\begin{equation}
+\widehat{\Sigma}_{B,t}^{\mathrm{scaled}}
+=\frac{\tr(\Sigma_t)}
+{\max\{\tr(\widehat{\Sigma}_{B,t}),\varepsilon_{\mathrm{num}}\}}
+\widehat{\Sigma}_{B,t},
+\label{eq:trace-matching}
+\end{equation}
+where $\varepsilon_{\mathrm{num}}$ is machine-scale protection against division by zero.  If
+the empirical covariance is numerically zero, the policy falls back to Gaussian-only
+sensing.  Otherwise it forms
+\begin{equation}
+\Sigma_{v2,t}
+=\rho\Sigma_t+(1-\rho)\widehat{\Sigma}_{B,t}^{\mathrm{scaled}},
+\qquad \rho=0.25 .
+\label{eq:v2-shrinkage}
+\end{equation}
+The Gaussian term supplies a full-rank diversity reference.  This matters because an
+$R$-member sample covariance has rank at most $R-1=11$, much smaller than $N=64$.
+
+\subsection{Action score and selection}
+
+Every unused candidate is scored by
+\begin{equation}
+s_{v2}(a)
+=\log\!\left(1+\frac{a\trans\Sigma_{v2,t}a}{\sigma^2}\right),
+\qquad
+a_{t+1}=\argmax_{a\in\mathcal{D}\setminus\mathcal{U}_t}s_{v2}(a),
+\label{eq:v2-score}
+\end{equation}
+where $\mathcal{D}$ is the candidate set and $\mathcal{U}_t$ contains already used actions.
+The selected raw variance is recorded as separate Gaussian and bootstrap contributions:
+\begin{equation}
+\rho\,a\trans\Sigma_ta
++(1-\rho)\,a\trans\widehat{\Sigma}_{B,t}^{\mathrm{scaled}}a .
+\label{eq:v2-components}
+\end{equation}
+Unlike the Gaussian covariance, $\widehat{\Sigma}_{B,t}$ is a function of $y_{1:t}$.  LASSO
+is nonlinear because soft thresholding can change active sets, so changing the observations
+can change both the ensemble support patterns and covariance.  A unit test explicitly
+verifies that two observation histories produce different bootstrap covariances while using
+the same perturbation draws.
+
+\subsection{End-to-end algorithm}
+
+For one trial, adaptive\_v2 performs the following causal loop:
+\begin{enumerate}
+\item Initialize $\mu_0=0$ and $\Sigma_0=(4/64)I=0.0625I$.
+\item For $t<8$, score unused rows with Gaussian variance only.
+\item For $t\geq8$, construct the bootstrap ensemble from $(A_t,y_{1:t})$, compute
+      Equations~\eqref{eq:bootstrap-covariance}--\eqref{eq:v2-shrinkage}, and score unused rows.
+\item Select the maximum-score row.  Only now does the simulator evaluate
+      $y_{t+1}=a_{t+1}\trans x+\epsilon_{t+1}$.
+\item Append the row and observation, update the Gaussian belief, and repeat.
+\item At each requested budget, reconstruct with the common final LASSO and compute metrics.
+\end{enumerate}
+
+\section{Stage 4B experiment and result}
+
+\subsection{Frozen protocol}
+
+The study used 100 paired trials, $N=64$, $k=4$, $M=128$, $\sigma=0.10$, budgets
+$B\in\{8,12,16,20,24,32\}$, final $\lambda=0.08$, and seed 20260927.  Each method was run
+once to $B=32$ per trial; smaller budgets reuse exact prefixes.  Five policies were compared:
+fixed, random, Gaussian-only, frozen adaptive\_v1 with $\gamma=1$, and adaptive\_v2.
+Confidence intervals are deterministic percentile-bootstrap intervals from 2000 resamples of
+the paired trial-level NMSE differences.
+
+\begin{table}[htbp]
+\centering
+\caption{Stage 4B mean NMSE over 100 paired trials.}
+\label{tab:stage4b}
+\begin{tabular}{rrrrrr}
+\hline
+$B$ & Fixed & Random & Gaussian-only & adaptive\_v1 & adaptive\_v2 \\
+\hline
+8  & 0.7956 & 0.7983 & 0.8210 & 0.8815 & 0.8210 \\
+12 & 0.5959 & 0.5243 & 0.5547 & 0.6967 & 0.5627 \\
+16 & 0.3894 & 0.3775 & 0.3437 & 0.5759 & 0.3807 \\
+20 & 0.2904 & 0.2807 & 0.2707 & 0.4643 & 0.2748 \\
+24 & 0.2289 & 0.2281 & 0.2231 & 0.4005 & 0.2228 \\
+32 & 0.1541 & 0.1657 & 0.1480 & 0.2788 & 0.1586 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Paired adaptive\_v2 NMSE difference from random; negative favors adaptive\_v2.}
+\label{tab:v2-ci}
+\begin{tabular}{rrrr}
+\hline
+$B$ & Mean difference & 95\% lower & 95\% upper \\
+\hline
+8  & +0.0227 & -0.0469 & +0.0940 \\
+12 & +0.0384 & -0.0312 & +0.1111 \\
+16 & +0.0033 & -0.0534 & +0.0651 \\
+20 & -0.0059 & -0.0513 & +0.0388 \\
+24 & -0.0053 & -0.0469 & +0.0410 \\
+32 & -0.0071 & -0.0383 & +0.0332 \\
+\hline
+\end{tabular}
+\end{table}
+
+\IfFileExists{artifacts/stage4b_adaptive_v2/nmse_comparison.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{artifacts/stage4b_adaptive_v2/nmse_comparison.png}
+\caption{Stage 4B comparison.  adaptive\_v2 removes the large adaptive\_v1 degradation but
+does not separate significantly from random or Gaussian-only sensing.}
+\end{figure}}{}
+
+\clearpage
+\subsection{Interpretation}
+
+The result supports three precise statements.
+\begin{enumerate}
+\item \textbf{The replacement fixed the identified failure mode.}  At $B=32$, adaptive\_v1
+      is worse than random by $+0.1132$ with interval $[+0.0745,+0.1534]$, whereas
+      adaptive\_v2 differs by $-0.0071$ with interval $[-0.0383,+0.0332]$.
+\item \textbf{Observation-dependent uncertainty did not yet produce a demonstrated gain.}
+      Every adaptive\_v2 interval in Table~\ref{tab:v2-ci} crosses zero.  It is therefore
+      accurate to call the method competitive, not superior.
+\item \textbf{The tested dense random dictionary leaves limited room for adaptivity.}
+      Fixed, random, Gaussian-only, and adaptive\_v2 become close at moderate and large
+      budgets.  Dense normalized rows already provide broad coverage, so selecting among
+      them may matter less than it would for structured dictionaries or clustered supports.
+\end{enumerate}
+
+Across the 2400 post-burn-in decisions, the bootstrap term supplied a mean 0.8705 fraction
+of the selected raw variance, the empirical covariance had mean rank 10.98 (consistent with
+the theoretical maximum 11), mean maximum row correlation was 0.25, mean condition number
+was 2.83, and mean post-observation provisional NMSE was 0.3389.  These diagnostics show that the bootstrap
+term is active; the null result is not caused by silently falling back to Gaussian-only
+sensing.
+
+\IfFileExists{artifacts/stage4b_adaptive_v2/paired_difference_vs_random.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{artifacts/stage4b_adaptive_v2/paired_difference_vs_random.png}
+\caption{Paired NMSE differences from random sensing with 95\% bootstrap intervals.}
+\end{figure}}{}
+
+\IfFileExists{artifacts/stage4b_adaptive_v2/adaptive_v2_diagnostics.png}{
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{artifacts/stage4b_adaptive_v2/adaptive_v2_diagnostics.png}
+\caption{Decision diagnostics.  The dashed vertical line separates the eight-step burn-in
+from bootstrap-guided sensing.}
+\end{figure}}{}
+
+\section{What should happen next}
+
+Stage 4B is complete as an implementation and base-setting evaluation.  It should not yet be
+followed by an LLM orchestrator, because the scientific action space is not sufficiently
+understood.  The next work should be a controlled Stage 4C sensitivity study:
+\begin{enumerate}
+\item vary $\rho\in\{0,0.25,0.5,0.75,1\}$ to measure the diversity--bootstrap trade-off;
+\item vary burn-in length and ensemble size $R$;
+\item compare observation perturbation with residual and wild bootstrap variants;
+\item test lower SNR, different sparsity levels, clustered supports, and structured
+      dictionaries in which adaptive selection has a clearer opportunity to help;
+\item pre-register a primary setting and confirm selected conclusions with 500 trials.
+\end{enumerate}
+Only after this policy family and experimental registry are stable should an LLM manage
+experiment selection, summarize evidence, or propose bounded follow-up configurations.  The
+LLM should not replace the numerical policy, the reconstructor, or the deterministic result
+registry.
+
+\section{Implementation map and reproducibility}
+
+\begin{center}
+\begin{tabular}{p{0.39\textwidth}p{0.53\textwidth}}
+\hline
+Path & Responsibility \\
+\hline
+\texttt{signals.py} & Sparse-signal generation. \\
+\texttt{measurements.py} & Candidate dictionary and $y=Ax+\epsilon$. \\
+\texttt{reconstruction.py} & LASSO objective and ISTA solver. \\
+\texttt{baselines.py} & Fixed and random action orders. \\
+\texttt{sequential.py} & Gaussian belief and frozen adaptive\_v1. \\
+\texttt{stage4.py} & Stage 4A gamma ablation and diagnostic records. \\
+\texttt{adaptive\_v2.py} & Bootstrap ensemble, covariance, shrinkage, and sequential loop. \\
+\texttt{stage4b.py} & Paired Stage 4B experiment and bootstrap confidence intervals. \\
+\texttt{run\_stage4b\_study.py} & CSV, metadata, and figure generation. \\
+\texttt{tests/test\_stage4b.py} & Determinism, causality, observation dependence, and paired-study tests. \\
+\hline
+\end{tabular}
+\end{center}
+
+Run the verification and primary study from the repository root:
+\begin{verbatim}
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe scripts\run_stage4b_study.py
+.venv\Scripts\python.exe scripts\build_living_report.py
+\end{verbatim}
+
+The Stage 4B output directory is
+\texttt{artifacts/stage4b\_adaptive\_v2/}.  It contains trial-level records, paired summaries,
+decision traces, exact metadata, and figures.  Random seeds are separated for dictionary,
+fixed order, signal, noise, random baseline, bootstrap policy, and confidence-interval
+resampling.  Runtime naturally varies; selected actions and quality metrics reproduce.
+
+\section{Limitations}
+
+The current evidence is limited to directly sparse Gaussian-amplitude signals, a dense
+Rademacher candidate dictionary, one noise level, and LASSO reconstruction.  The bootstrap
+ensemble perturbs observations conditionally on one measured history and does not represent
+all forms of model uncertainty.  Trace matching is an explicit heuristic, not a Bayesian
+identity.  The final numerical conclusions apply to the frozen configurations reported here;
+they do not establish that adaptive sensing is generally useless or generally superior.
+
+\small
+\begin{thebibliography}{9}
+\setlength{\itemsep}{0.15em}
+\bibitem{tibshirani1996}
+R. Tibshirani, ``Regression Shrinkage and Selection via the Lasso,''
+\emph{Journal of the Royal Statistical Society: Series B}, 1996.
+
+\bibitem{daubechies2004}
+I. Daubechies, M. Defrise, and C. De Mol, ``An Iterative Thresholding Algorithm for Linear
+Inverse Problems with a Sparsity Constraint,'' \emph{Communications on Pure and Applied
+Mathematics}, 2004.
+
+\bibitem{candes2006}
+E. Cand\`es, J. Romberg, and T. Tao, ``Robust Uncertainty Principles: Exact Signal
+Reconstruction from Highly Incomplete Frequency Information,''
+\emph{IEEE Transactions on Information Theory}, 2006.
+
+\bibitem{efron1993}
+B. Efron and R. Tibshirani, \emph{An Introduction to the Bootstrap}, Chapman \& Hall, 1993.
+\end{thebibliography}
+
+\end{document}

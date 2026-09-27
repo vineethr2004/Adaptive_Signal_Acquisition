@@ -7,24 +7,9 @@ it remains an auditable account rather than a retrospective success story.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
-
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import (
-    Image,
-    KeepTogether,
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = REPOSITORY_ROOT / "output" / "pdf" / "Adaptive_Signal_Acquisition_Living_Report.pdf"
@@ -76,7 +61,7 @@ def footer(canvas, document) -> None:  # type: ignore[no-untyped-def]
     canvas.restoreState()
 
 
-def build_report() -> Path:
+def build_report_reportlab_legacy() -> Path:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     document = SimpleDocTemplate(
         str(OUTPUT_PATH),
@@ -544,6 +529,28 @@ def build_report() -> Path:
     story.append(Spacer(1, 0.5 * cm))
     story.append(paragraph("Report version: v2 - Stages 1 through 4A complete", styles["Caption"]))
     document.build(story, onFirstPage=footer, onLaterPages=footer)
+    return OUTPUT_PATH
+
+
+def build_report() -> Path:
+    """Compile the formal LaTeX article with stable references."""
+
+    source = REPOSITORY_ROOT / "docs" / "Adaptive_Signal_Acquisition_Living_Report.tex"
+    compiler = shutil.which("pdflatex")
+    if compiler is None:
+        raise RuntimeError("pdflatex is required; install MiKTeX or TeX Live")
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        compiler,
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        f"-output-directory={OUTPUT_PATH.parent}",
+        str(source),
+    ]
+    for _ in range(3):
+        subprocess.run(command, cwd=REPOSITORY_ROOT, check=True)
+    if not OUTPUT_PATH.exists() or OUTPUT_PATH.stat().st_size == 0:
+        raise RuntimeError(f"LaTeX did not produce {OUTPUT_PATH}")
     return OUTPUT_PATH
 
 

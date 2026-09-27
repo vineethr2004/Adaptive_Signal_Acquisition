@@ -110,6 +110,23 @@ Artifacts are written to `artifacts/stage4a_diagnostics/`. The purpose is diagno
 current adaptive method remains unchanged, and a later `adaptive_v2` will be introduced only
 after these ablations identify what is failing.
 
+## Stage 4B: bootstrap reconstruction uncertainty
+
+Stage 4B keeps `adaptive_v1` frozen and introduces `adaptive_v2` as a separate policy. It
+uses eight Gaussian-diverse burn-in measurements, then perturbs the observed measurement
+history, reconstructs an ensemble of plausible sparse signals, and measures their empirical
+covariance. Candidate rows are scored where these plausible reconstructions disagree, with
+Gaussian covariance shrinkage retained to preserve sensing-matrix diversity.
+
+```powershell
+python scripts/run_stage4b_study.py
+```
+
+Artifacts are written to `artifacts/stage4b_adaptive_v2/`: paired trial and summary CSVs,
+decision-level diagnostics, exact metadata, and three figures. The comparison includes fixed,
+random, Gaussian-only, frozen `adaptive_v1`, and `adaptive_v2`, all under the same hidden
+signals, noise draws, budgets, and final LASSO reconstructor.
+
 ## Tests
 
 ```powershell
